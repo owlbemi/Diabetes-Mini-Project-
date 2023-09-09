@@ -1,0 +1,292 @@
+---
+title: Diabetes Mini Project
+author: Jake Lee
+urlcolor: blue
+geometry: "top = 0cm"
+always_allow_html: yes
+output:
+    pdf_document:
+        latex_engine: xelatex
+---
+
+```{r}
+library("ISLR")
+library("pls")
+library("dplyr")
+library("standardize")
+Hit <- Hitters
+
+#Data Cleaning
+levels(Hit$League) <- c(1, 2)
+levels(Hit$Division) <- c(1, 2)
+levels(Hit$NewLeague) <- c(1, 2)
+
+Hit$League <- as.numeric(as.character(Hit$League))
+Hit$Division <- as.numeric(as.character(Hit$Division))
+Hit$NewLeague <- as.numeric(as.character(Hit$NewLeague))
+
+Hit[is.na(Hit)] <- 0
+
+#Standardize the data
+Hit <- scale(Hit)
+Hit <- as.data.frame(Hit)
+
+pca <- prcomp(Hit, center = TRUE, scale = TRUE)
+summary(pca)
+```
+I will choose the first four PCs (PC1 ~ PC4).
+
+### c
+```{r}
+library("data.table")
+
+pc1 <- pca$x[, 1]
+pc2 <- pca$x[, 2]
+
+corr <- cor(pc1, pc2)
+corr
+
+comp_pc <- data.table(pc1, pc2)
+comp_pc
+
+biplot(pca)
+```
+
+The correlation between PC1 and PC2 is about $-8.95787e-17$, in which we can regard is as 0, meaning that PC1 and PC2 show no correlation. This is because PC1 is the one with most variation amongst the data, while PC2 shows the second-most variation, which PC2 is also orthogonal to PC1. PC1 and PC2 are independent.
+
+```{r}
+library("tree")
+library("caret")
+
+Hit_2 <- Hit
+Hit_2[is.na(Hit_2)] <- 0
+Hit_2$Salary <- log(Hit_2$Salary)
+
+Hit_2$Salary[is.na(Hit_2$Salary)] <- -1
+
+mn <- mean(Hit_2$Salary)
+
+High <- as.factor(ifelse(Hit_2$Salary <= mn, "No", "Yes"))
+Hit_2 <- data.frame(Hit_2, High)
+
+levels(Hit_2$League) <- c(1, 2)
+levels(Hit_2$Division) <- c(1, 2)
+levels(Hit_2$NewLeague) <- c(1, 2)
+
+Hit_2$League <- as.numeric(as.character(Hit_2$League))
+Hit_2$Division <- as.numeric(as.character(Hit_2$Division))
+Hit_2$NewLeague <- as.numeric(as.character(Hit_2$NewLeague))
+
+#Plot tree
+tree_hit <- tree(High ~. - Salary, Hit_2)
+
+tree_hit
+summary(tree_hit)
+
+plot(tree_hit)
+text(tree_hit, pretty = 0, cex = 0.7)
+
+#Test / Train sets
+set.seed(2000)
+train <- sample(1:nrow(Hit_2), 200)
+
+Hit_test <- Hit_2[-train, ]
+High_test <- High[-train]
+
+train_tree <- tree(High ~. - Salary, Hit_2, subset = train)
+tree_pred <- predict(train_tree, Hit_test, type = "class")
+
+levels(tree_pred) <- c(0, 1)
+levels(Hit_2$High) <- c(0, 1)
+
+Hit_2$High <- as.numeric(as.character(Hit_2$High))
+tree_pred <- as.numeric(as.character(tree_pred))
+cv_error <- (tree_pred - Hit_2$High) ^ 2
+
+#test MSE
+mean(cv_error)
+```
+
+```{r}
+Hit_2$High <- as.factor(Hit_2$High)
+levels(Hit_2$High) <- c("No", "Yes")
+
+#Test / Train sets
+set.seed(2000)
+train <- sample(1:nrow(Hit_2), 200)
+#Comfusion Matrix
+table(tree_pred, High_test)
+
+#Misclassification rate
+mc_rate <- (11 + 14) / 200
+mc_rate
+
+#Cost Complexity-Pruning
+set.seed(10331)
+cv_hit <- cv.tree(tree_hit, FUN = prune.misclass)
+cv_hit
+
+#Plot Pruned tree
+bs <- cv_hit$size[which.min(cv_hit$dev)]
+prune_hit <- prune.misclass(tree_hit, best = bs)
+plot(prune_hit)
+text(prune_hit, pretty = 0)
+
+#Predictions on test data
+tree_pred <- predict(prune_hit, Hit_test, type = "class")
+
+table(tree_pred, High_test)
+
+ms_rate <- (6 + 8) / 200
+ms_rate
+
+prune_hit <- prune.misclass(tree_hit, best = bs)
+tree_pred <- predict(prune_hit, Hit_test, type = "class")
+table(tree_pred, High_test)
+
+yhat <- predict(tree_hit, newdata = Hit_2[-train, ])
+Hit_test <- Hit_2[-train, "High"]
+
+levels(Hit_test) <- c(0, 1)
+Hit_test <- as.numeric(as.character(Hit_test))
+
+mean((yhat - Hit_test) ^ 2)
+```
+
+The test MSE of un-pruned tree shows smaller value, which means that the data is more clustered, which is more likely to predict better than the other one. The predictor for un-pruned tree seems more important therefore.
+
+### c
+```{r}
+library(randomForest)
+
+set.seed(112)
+
+#Perform if Hit_2 still has "High" Column
+#Hit_2 <- select(Hit_2, -"High")
+
+train <- sample(1:nrow(Hit_2), nrow(Hit_2) / 2)
+Hit_test <- Hit_2[-train, ]
+
+bag_hit <- randomForest(Salary ~ ., data = Hit_2, subset = train, mtry = 13, ntree = 1000, importance = TRUE)
+bag_hit
+
+#Compute test error rate
+yhat_bag <- predict(bag_hit, newdata = Hit_2[-train, ])
+yhat_bag <- as.matrix(transform(as.matrix(yhat_bag)))
+
+
+yhat_bag <- as.numeric(yhat_bag)
+Hit_test <- as.numeric(as.character(unlist(Hit_test[1])))
+
+mean((yhat_bag - Hit_test) ^ 2)
+
+importance(bag_hit)
+varImpPlot(bag_hit)
+```
+
+`Hits` is the most important variable in this case too, as it has the highest Node Purity.
+
+### d
+```{r}
+rf_hit <- randomForest(Salary ~., data = Hit_2, subset = train, mtry = 6, ntree = 1000, importance = TRUE)
+
+yhat_rf <- predict(rf_hit, newdata = Hit_2[-train, ])
+mean((yhat_rf - Hit_test) ^ 2)
+
+importance(rf_hit)
+varImpPlot(rf_hit)
+```
+
+`Hits` is the most important variable as it has the highest Node Purity.
+
+### e
+```{r}
+library("gbm")
+
+#Fit bossted regression tree
+set.seed(5)
+boost_hit <- gbm(Salary ~., data = Hit_2[train, ], distribution = "gaussian", n.trees = 1000, interaction.depth = 1, shrinkage = 0.01, verbose = F)
+
+summary(boost_hit)
+
+par(mfrow = c(1, 2))
+plot(boost_hit, i = "Hits")
+
+#Compute test error rate for boosted model
+yhat_boost <- predict(boost_hit, newdata = Hit_2[-train, ], n.trees = 1000)
+mean((yhat_boost - Hit_test) ^ 2)
+```
+
+```{r}
+library(e1071)
+library(MASS)
+
+db <- read.csv("/Users/owlbemi/Documents/STAT4360/Miniproject_5/diabetes.csv")
+
+set.seed(1002)
+db_train <- sample(1:nrow(db), nrow(db) / 2)
+db_test <- db[-train, ]
+
+svm_tune <- tune(svm, Outcome ~., data = db[db_train, ], ranges = list(cost = c(0.1, 1, 10, 100)), tunecontrol = tune.control(sampling = "cross", cross = 10))
+
+optimal.cost <- svm_tune$best.parameters$cost
+optimal.gamma <- svm_tune$best.parameters$gamma
+summary(svm_tune)
+
+svm_fit <- svm(Outcome ~., data = db[db_train, ], cost = 10)
+summary(svm_fit)
+```
+
+```{r}
+svm_tune <- tune(svm, Outcome ~., data = db[db_train, ], kernel = "polynomial", ranges = list(cost = c(0.1, 1, 10, 100)), degree = 2)
+
+optimal.cost <- svm_tune$best.parameters$cost
+optimal.gamma <- svm_tune$best.parameters$gamma
+summary(svm_tune)
+
+svm_tune <- tune(svm, Outcome ~., data = db[db_train, ], kernel = "polynomial",
+                 cost = 10, degree = 2, tunecontrol = tune.control(sampling = "cross", cross = 10))
+summary(svm_tune)
+
+svm_fit <- svm(Outcome ~., data = db[db_train, ], kernel = "polynomial", cost = 10, degree = 2)
+summary(svm_fit)
+```
+
+```{r}
+svm_tune <- tune(svm, Outcome ~., data = db[db_train, ], kernel = "radial", ranges = list(cost = c(0.1, 1, 10, 100), gamma = c(0.01, 0.1, 1, 10)))
+
+optimal.cost <- svm_tune$best.parameters$cost
+optimal.gamma <- svm_tune$best.parameters$gamma
+
+summary(svm_tune)
+
+svm_tune <- tune(svm, Outcome ~., data = db[db_train, ], kernel = "radial", cost = 10, gamma = 10)
+
+summary(svm_tune)
+
+svm_fit <- svm(Outcome ~., data = db[db_train, ], kernel = "radial", cost = 10, gamma = 10)
+summary(svm_fit)
+```
+
+Choosing both cost and gamma optimally computes the smallest test MSE amongst other methods. Choosing the optimal value for cost and gamma in SVM is important as it can significantly affect the performance of the model on new data. We can improve the generalisation ability of the model and avoid over-fitting or under-fitting.
+
+Standardising the variables before clustering ensures that all variables are on the same scale and have equal importance in the clustering process. Variables with larger variances or larger numerical ranges can dominate the clustering process and lead to biased results without the standardisation process.
+
+```{r}
+Hit_dist <- dist(Hit, method = "euclidean")
+Hit_clust <- hclust(Hit_dist, method = "complete")
+
+plot(Hit_clust, hang = -1)
+Hit_clusters <- cutree(Hit_clust, k = 2)
+aggregate(Hit, by = list(Hit_clusters), mean)
+aggregate(Hit$Salary, by = list(Hit_clusters), mean)
+```
+
+```{r}
+Hit_kmeans <- kmeans(Hit, centers = 2, nstart = 25)
+aggregate(Hit, by = list(Hit_kmeans$cluster), mean)
+aggregate(Hit$Salary, by = list(Hit_kmeans$cluster), mean)
+```
+
+If one cluster has higher mean values for certain performance metrics, this would indicate that the players in that cluster are more skilled or successful in those areas.
+
