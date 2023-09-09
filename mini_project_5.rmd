@@ -114,7 +114,8 @@ levels(Hit_2$High) <- c("No", "Yes")
 #Test / Train sets
 set.seed(2000)
 train <- sample(1:nrow(Hit_2), 200)
-#Comfusion Matrix
+
+#Confusion Matrix
 table(tree_pred, High_test)
 
 #Misclassification rate
@@ -203,7 +204,7 @@ varImpPlot(rf_hit)
 ```{r}
 library("gbm")
 
-#Fit bossted regression tree
+#Fit boosted regression tree
 set.seed(5)
 boost_hit <- gbm(Salary ~., data = Hit_2[train, ], distribution = "gaussian", n.trees = 1000, interaction.depth = 1, shrinkage = 0.01, verbose = F)
 
